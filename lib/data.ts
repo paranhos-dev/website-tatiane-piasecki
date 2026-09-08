@@ -134,8 +134,8 @@ export type GaleriaFoto = {
   na_home: boolean;
 };
 
-// ---------- biblioteca ----------
-/** A biblioteca aceita as categorias dos ensaios mais "outro" para o que nao se encaixa. */
+// ---------- Categorias (vocabulario compartilhado admin + /ensaios) ----------
+/** Categorias dos ensaios mais "outro" para o que nao se encaixa. */
 export type CategoriaBiblioteca = Categoria | 'outro';
 
 export const CATEGORIAS_BIBLIOTECA: CategoriaBiblioteca[] = [...CATEGORIAS, 'outro'];
@@ -145,32 +145,7 @@ export const CATEGORIA_BIBLIOTECA_LABEL: Record<CategoriaBiblioteca, string> = {
   outro: 'Outro',
 };
 
-export type BibliotecaFoto = {
-  id: string;
-  url: string;
-  public_id: string;
-  categoria: CategoriaBiblioteca | null;
-  /** Nome da gaveta. null = fora de qualquer gaveta. */
-  colecao: string | null;
-  notas: string;
-  posicao: number;
-  created_at: string;
-};
-
-/** Gaveta = agrupamento livre de fotos da biblioteca, com a contagem atual. */
-export type Gaveta = { nome: string; total: number };
-
-
-/** Um lugar do site onde a foto esta sendo usada. */
-export type BibliotecaUso = { onde: string };
-
-/** public_id -> rotulos de onde a foto aparece. Vazio significa disponivel. */
-export type UsoPorPublicId = Record<string, string[]>;
-
 export type FiltroCategoria = CategoriaBiblioteca | 'todas';
-export type FiltroStatus = 'todos' | 'em-uso' | 'disponivel';
-
-export const BIBLIOTECA_POR_PAGINA = 24;
 
 // ---------- Limites da home ----------
 export const MAX_HOME_ENSAIOS = 6;

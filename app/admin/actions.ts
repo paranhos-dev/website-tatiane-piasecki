@@ -2,10 +2,10 @@
 import { revalidatePath } from 'next/cache';
 import { createClient, createAdminClient } from '@/lib/supabase/server';
 import { uploadBuffer, destroy } from '@/lib/cloudinary';
-import { contarNaHome, getBibliotecaUso } from '@/lib/photos';
+import { contarNaHome } from '@/lib/photos';
 import {
-  Categoria, CATEGORIAS, CategoriaBiblioteca, CATEGORIAS_BIBLIOTECA, MAX_HOME,
-  SlotKey, SLOT_KEYS, TabelaComHome, TabelaOrdenavel, TEXTO_KEYS,
+  Categoria, CATEGORIAS, MAX_HOME, SlotKey, SLOT_KEYS, TabelaComHome, TabelaOrdenavel,
+  TEXTO_KEYS,
 } from '@/lib/data';
 
 export type Resultado = { ok: boolean; erro?: string; id?: string };
@@ -128,25 +128,6 @@ export async function updateSlot(key: SlotKey, formData: FormData): Promise<Resu
   });
 }
 
-/** Atribui a um slot uma foto já existente na biblioteca (sem novo upload). */
-export async function updateSlotFromBiblioteca(
-  key: SlotKey, url: string, publicId: string,
-): Promise<Resultado> {
-  return executar('updateSlotFromBiblioteca', async () => {
-    await exigirSessao();
-    if (!SLOT_KEYS.includes(key)) return falha('Slot desconhecido.');
-
-    const db = createAdminClient();
-    const { error } = await db.from('site_slots').upsert({
-      key, url, public_id: publicId, updated_at: new Date().toISOString(),
-    });
-    if (error) return falha(error.message);
-
-    atualizarSite();
-    return OK;
-  });
-}
-
 // ---------- Textos do site ----------
 export async function updateTextos(formData: FormData): Promise<Resultado> {
   return executar('updateTextos', async () => {
@@ -223,26 +204,6 @@ export async function uploadEnsaioFotos(ensaioId: string, formData: FormData): P
   });
 }
 
-/** Adiciona fotos da biblioteca a um ensaio (sem novo upload — só insere registros). */
-export async function adicionarBibliotecaEnsaio(
-  ensaioId: string, fotos: { url: string; public_id: string }[],
-): Promise<Resultado> {
-  return executar('adicionarBibliotecaEnsaio', async () => {
-    await exigirSessao();
-    if (!ensaioId || fotos.length === 0) return falha('Nenhuma foto informada.');
-    const db = createAdminClient();
-    let posicao = await proximaPosicao('ensaio_fotos', ensaioId);
-    for (const f of fotos) {
-      const { error } = await db.from('ensaio_fotos').insert({
-        ensaio_id: ensaioId, url: f.url, public_id: f.public_id, posicao: posicao++,
-      });
-      if (error) return falha(error.message);
-    }
-    atualizarSite();
-    return OK;
-  });
-}
-
 export async function deleteEnsaio(id: string): Promise<Resultado> {
   return executar('deleteEnsaio', async () => {
     await exigirSessao();
@@ -307,31 +268,6 @@ export async function uploadGaleria(formData: FormData): Promise<Resultado> {
   });
 }
 
-/** Adiciona fotos já existentes na biblioteca à galeria (sem novo upload). */
-export async function adicionarBibliotecaGaleria(ids: string[]): Promise<Resultado> {
-  return executar('adicionarBibliotecaGaleria', async () => {
-    await exigirSessao();
-    if (ids.length === 0) return falha('Nenhuma foto selecionada.');
-    const db = createAdminClient();
-
-    // Busca url + public_id das fotos selecionadas na biblioteca.
-    const { data, error: erroBusca } = await db
-      .from('biblioteca').select('url, public_id').in('id', ids);
-    if (erroBusca || !data) return falha(erroBusca?.message ?? 'Erro ao buscar fotos.');
-
-    let posicao = await proximaPosicao('galeria');
-    for (const foto of data as { url: string; public_id: string }[]) {
-      const { error } = await db.from('galeria').insert({
-        url: foto.url, public_id: foto.public_id, posicao: posicao++, na_home: false,
-      });
-      if (error) return falha(error.message);
-    }
-
-    atualizarSite();
-    return OK;
-  });
-}
-
 export async function deleteGaleriaFoto(id: string, publicId: string): Promise<Resultado> {
   return executar('deleteGaleriaFoto', async () => {
     await exigirSessao();
@@ -340,33 +276,6 @@ export async function deleteGaleriaFoto(id: string, publicId: string): Promise<R
     const { error } = await createAdminClient().from('galeria').delete().eq('id', id);
     if (error) return falha(error.message);
 
-    atualizarSite();
-    return OK;
-  });
-}
-
-// ---------- Pastas da biblioteca ----------
-export async function criarPasta(nome: string, categoria: string): Promise<Resultado> {
-  return executar('criarPasta', async () => {
-    await exigirSessao();
-    const { error } = await createAdminClient()
-      .from('biblioteca_pastas')
-      .upsert({ nome: nome.trim(), categoria }, { onConflict: 'nome,categoria', ignoreDuplicates: true });
-    if (error) return falha(error.message);
-    atualizarSite();
-    return OK;
-  });
-}
-
-export async function deletarPasta(nome: string, categoria: string): Promise<Resultado> {
-  return executar('deletarPasta', async () => {
-    await exigirSessao();
-    const { error } = await createAdminClient()
-      .from('biblioteca_pastas')
-      .delete()
-      .eq('nome', nome)
-      .eq('categoria', categoria);
-    if (error) return falha(error.message);
     atualizarSite();
     return OK;
   });
@@ -418,189 +327,3 @@ export async function reordenar(tabela: TabelaOrdenavel, ids: string[]): Promise
   });
 }
 
-// ---------- Biblioteca ----------
-export async function uploadBiblioteca(formData: FormData): Promise<Resultado> {
-  return executar('uploadBiblioteca', async () => {
-    await exigirSessao();
-    const files = arquivosDe(formData);
-    if (files.length === 0) return falha('Nenhum arquivo recebido.');
-
-    const categoria = String(formData.get('categoria') ?? '') as CategoriaBiblioteca;
-    const valida = CATEGORIAS_BIBLIOTECA.includes(categoria) ? categoria : null;
-    // Upload feito de dentro de uma pasta ja nasce com categoria e colecao.
-    const colecao = String(formData.get('colecao') ?? '').trim().slice(0, 60) || null;
-
-    const db = createAdminClient();
-    const { data: ultima } = await db
-      .from('biblioteca').select('posicao')
-      .order('posicao', { ascending: false }).limit(1).maybeSingle();
-    let posicao = ((ultima?.posicao as number | undefined) ?? -1) + 1;
-
-    for (const file of files) {
-      const up = await subir(file, 'biblioteca');
-      const { error } = await db.from('biblioteca').insert({
-        url: up.secure_url, public_id: up.public_id,
-        categoria: valida, colecao, notas: '', posicao: posicao++,
-      });
-      if (error) return falha(error.message);
-    }
-
-    atualizarSite();
-    return OK;
-  });
-}
-
-export async function deleteBibliotecaFoto(id: string, publicId: string): Promise<Resultado> {
-  return executar('deleteBibliotecaFoto', async () => {
-    await exigirSessao();
-
-    // Apagar uma foto em uso deixaria imagem quebrada no site.
-    const uso = await getBibliotecaUso([publicId]);
-    const onde = uso[publicId] ?? [];
-    if (onde.length > 0) {
-      return falha(`Esta foto está em uso em: ${onde.join(', ')}. Remova de lá antes de deletar.`);
-    }
-
-    await destroy(publicId);
-    const { error } = await createAdminClient().from('biblioteca').delete().eq('id', id);
-    if (error) return falha(error.message);
-
-    atualizarSite();
-    return OK;
-  });
-}
-
-/** Deleta várias fotos da biblioteca em cascata (galeria, ensaios, slots, Cloudinary, biblioteca). */
-export async function deleteBibliotecaLote(ids: string[]): Promise<Resultado> {
-  return executar('deleteBibliotecaLote', async () => {
-    await exigirSessao();
-    if (ids.length === 0) return falha('Nenhuma foto selecionada.');
-    const db = createAdminClient();
-
-    const { data, error: erroBusca } = await db
-      .from('biblioteca').select('id, public_id').in('id', ids);
-    if (erroBusca || !data) return falha(erroBusca?.message ?? 'Erro ao buscar fotos.');
-
-    const fotos = data as { id: string; public_id: string }[];
-    const publicIds = fotos.map((f) => f.public_id);
-
-    // Remove de todas as tabelas que referenciam por public_id.
-    await Promise.all([
-      db.from('galeria').delete().in('public_id', publicIds),
-      db.from('ensaio_fotos').delete().in('public_id', publicIds),
-      db.from('site_slots').delete().in('public_id', publicIds),
-    ]);
-
-    // Deleta do Cloudinary e da biblioteca.
-    for (const foto of fotos) {
-      await destroy(foto.public_id);
-      await db.from('biblioteca').delete().eq('id', foto.id);
-    }
-
-    atualizarSite();
-    return OK;
-  });
-}
-
-export async function updateBibliotecaFoto(id: string, formData: FormData): Promise<Resultado> {
-  return executar('updateBibliotecaFoto', async () => {
-    await exigirSessao();
-
-    const bruta = String(formData.get('categoria') ?? '').trim();
-    const categoria = CATEGORIAS_BIBLIOTECA.includes(bruta as CategoriaBiblioteca)
-      ? (bruta as CategoriaBiblioteca)
-      : null;
-    const notas = String(formData.get('notas') ?? '').trim().slice(0, 200);
-
-    const { error } = await createAdminClient()
-      .from('biblioteca').update({ categoria, notas }).eq('id', id);
-    if (error) return falha(error.message);
-
-    atualizarSite();
-    return OK;
-  });
-}
-
-export async function updateBibliotecaLote(ids: string[], categoria: string): Promise<Resultado> {
-  return executar('updateBibliotecaLote', async () => {
-    await exigirSessao();
-    if (!ids.length) return falha('Nenhuma foto selecionada.');
-
-    const cat = CATEGORIAS_BIBLIOTECA.includes(categoria as CategoriaBiblioteca)
-      ? (categoria as CategoriaBiblioteca)
-      : null;
-
-    const { error } = await createAdminClient()
-      .from('biblioteca').update({ categoria: cat }).in('id', ids);
-    if (error) return falha(error.message);
-
-    atualizarSite();
-    return OK;
-  });
-}
-
-// ---------- Gavetas ----------
-/** Gaveta vazia ('') remove a foto de qualquer gaveta. */
-export async function moverParaGaveta(ids: string[], colecao: string): Promise<Resultado> {
-  return executar('moverParaGaveta', async () => {
-    await exigirSessao();
-    if (ids.length === 0) return falha('Nenhuma foto selecionada.');
-
-    const nome = colecao.trim().slice(0, 60);
-    const { error } = await createAdminClient()
-      .from('biblioteca').update({ colecao: nome || null }).in('id', ids);
-    if (error) return falha(error.message);
-
-    atualizarSite();
-    return OK;
-  });
-}
-
-/**
- * Promove uma gaveta a ensaio. As fotos continuam na biblioteca — o ensaio referencia
- * as mesmas URLs do Cloudinary, e por isso elas passam a aparecer como "em uso".
- */
-export async function criarEnsaioDeGaveta(colecao: string): Promise<Resultado> {
-  return executar('criarEnsaioDeGaveta', async () => {
-    await exigirSessao();
-    const nome = colecao.trim();
-    if (!nome) return falha('Gaveta não informada.');
-
-    const db = createAdminClient();
-    const { data: fotos, error: erroFotos } = await db
-      .from('biblioteca').select('url, public_id')
-      .eq('colecao', nome).order('posicao', { ascending: true });
-    if (erroFotos) return falha(erroFotos.message);
-
-    const lista = (fotos ?? []) as { url: string; public_id: string }[];
-    if (lista.length === 0) return falha(`A gaveta "${nome}" está vazia.`);
-
-    const [capa, ...demais] = lista;
-    const posicao = await proximaPosicao('ensaios');
-
-    const { data: criado, error } = await db.from('ensaios').insert({
-      titulo: nome,
-      categoria: 'familia' as Categoria,
-      cover_url: capa.url,
-      cover_public_id: capa.public_id,
-      posicao,
-      data_ensaio: null,
-      na_home: false,
-    }).select('id').single();
-    if (error) return falha(error.message);
-
-    const ensaioId = criado?.id as string;
-
-    if (demais.length > 0) {
-      const { error: erroFotosEnsaio } = await db.from('ensaio_fotos').insert(
-        demais.map((f, i) => ({
-          ensaio_id: ensaioId, url: f.url, public_id: f.public_id, posicao: i,
-        })),
-      );
-      if (erroFotosEnsaio) return falha(erroFotosEnsaio.message);
-    }
-
-    atualizarSite();
-    return { ok: true, id: ensaioId };
-  });
-}
